@@ -6,7 +6,7 @@ import {
   AlertTriangle, PieChart, Server, Users, QrCode, Briefcase, Edit, Eye, EyeOff, PanelTopClose, PanelTopOpen, TrendingUp,
 } from 'lucide-react';
 import { manufactureGraph } from '../data/mockData';
-import { flattenTree } from '../utils/treeHelpers';
+import { flattenTree, getPartHierarchyLabels } from '../utils/treeHelpers';
 import { formatIDR, formatPrice } from '../utils/formatters';
 import {
   CONTAINER_PRESETS,
@@ -15,7 +15,7 @@ import {
   calcPackingVolume,
   findPackingByType,
 } from '../utils/packingVolume';
-import { ELBA_CHAIR_REFERENCE, EXCEL_FACTORY_OH_PCT } from '../data/excelReference';
+import { ELBA_CHAIR_REFERENCE, EXCEL_FACTORY_OH_PCT, MATERIAL_TYPE_OPTIONS } from '../data/excelReference';
 import { calcProsesCosts, LABOR_RATE_PER_MIN } from '../utils/operationCosts';
 import { getProsesById } from '../data/routingCatalog';
 import { tipeStyles } from '../design/tipeStyles';
@@ -29,8 +29,97 @@ import KalkulasiModal from '../components/modals/KalkulasiModal';
 import MarkupPreviewModal from '../components/modals/MarkupPreviewModal';
 import ProductPanel from '../components/product/ProductPanel';
 import OperasiDetailCell from '../components/ui/OperasiDetailCell';
+import FontCaseToggle from '../components/ui/FontCaseToggle';
+import ExportMenu from '../components/ui/ExportMenu';
+import { buildBomExportPayload, exportBomToExcel, exportBomToPdf } from '../utils/bomExport';
 import { VENDOR_SAMPLES } from '../data/masterSamples';
 import { resolveNodeFoto } from '../utils/images';
+import { flattenProsesLineItems, sumProsesLineItems } from '../utils/prosesLineItems';
+
+function MaterialTypeField({ value, onChange }) {
+  return (
+    <select
+      value={value || ''}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full min-w-[120px] border border-emerald-200 rounded-lg px-2 py-1.5 text-[10px] font-bold bg-emerald-50/50 text-emerald-800 focus:border-emerald-400 focus:ring-1 focus:ring-emerald-100 outline-none uppercase tracking-wide"
+    >
+      <option value="">— Pilih —</option>
+      {MATERIAL_TYPE_OPTIONS.map((opt) => (
+        <option key={opt.key} value={opt.key}>
+          {opt.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function SummaryTotalCards({ fp, totals }) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-4">
+        <span className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest">Total Material</span>
+        <p className="text-lg font-black text-emerald-800 mt-1">{fp(totals.material)}</p>
+      </div>
+      <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+        <span className="text-[9px] font-bold text-indigo-600 uppercase tracking-widest">Total Proses</span>
+        <p className="text-lg font-black text-indigo-800 mt-1">{fp(totals.process)}</p>
+      </div>
+      <div className="rounded-xl border border-brand-200 bg-brand-50/50 p-4">
+        <span className="text-[9px] font-bold text-brand-600 uppercase tracking-widest">Total Biaya Produksi</span>
+        <p className="text-xl font-black text-brand-800 mt-1">{fp(totals.production)}</p>
+      </div>
+    </div>
+  );
+}
+
+function MaterialTotalCards({ fp, totals }) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-4">
+        <span className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest">Total Material</span>
+        <p className="text-xl font-black text-emerald-800 mt-1">{fp(totals.material)}</p>
+        <p className="text-[9px] text-emerald-600/70 mt-0.5 font-medium">Termasuk SF &amp; WF</p>
+      </div>
+      <div className="rounded-xl border border-amber-100 bg-amber-50/50 p-4">
+        <span className="text-[9px] font-bold text-amber-600 uppercase tracking-widest">Material Dasar</span>
+        <p className="text-lg font-black text-amber-800 mt-1">{fp(totals.materialBase)}</p>
+        <p className="text-[9px] text-amber-600/70 mt-0.5 font-medium">Sebelum SF &amp; WF</p>
+      </div>
+      <div className="rounded-xl border border-teal-100 bg-teal-50/50 p-4">
+        <span className="text-[9px] font-bold text-teal-600 uppercase tracking-widest">Jumlah Part</span>
+        <p className="text-xl font-black text-teal-800 mt-1">{totals.partCount} <span className="text-sm font-bold">item</span></p>
+        <p className="text-[9px] text-teal-600/70 mt-0.5 font-medium">{totals.totalQty} unit total qty</p>
+      </div>
+    </div>
+  );
+}
+
+function ProsesTotalCards({ fp, totals }) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+        <span className="text-[9px] font-bold text-blue-600 uppercase tracking-widest">Durasi (Menit)</span>
+        <p className="text-xl font-black text-blue-800 mt-1">{totals.waktu} <span className="text-sm font-bold">menit</span></p>
+        <p className="text-[9px] text-blue-600/70 mt-0.5 font-medium">{totals.lineCount} baris operasi</p>
+      </div>
+      <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+        <span className="text-[9px] font-bold text-indigo-600 uppercase tracking-widest">Biaya Proses</span>
+        <p className="text-lg font-black text-indigo-800 mt-1">{fp(totals.mesin)}</p>
+        <p className="text-[9px] text-indigo-600/70 mt-0.5 font-medium">Work center &amp; mesin</p>
+      </div>
+      <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-4">
+        <span className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest">Biaya Tenaga Kerja</span>
+        <p className="text-lg font-black text-emerald-800 mt-1">{fp(totals.pekerja)}</p>
+        <p className="text-[9px] text-emerald-600/70 mt-0.5 font-medium">{totals.personMinutes} org·menit</p>
+      </div>
+      <div className="rounded-xl border border-brand-200 bg-brand-50/50 p-4">
+        <span className="text-[9px] font-bold text-brand-600 uppercase tracking-widest">Total Biaya Proses</span>
+        <p className="text-xl font-black text-brand-800 mt-1">{fp(totals.total)}</p>
+        <p className="text-[9px] text-brand-600/70 mt-0.5 font-medium">Biaya proses + tenaga kerja</p>
+      </div>
+    </div>
+  );
+}
 
 function VendorField({ value, onChange }) {
   const known = VENDOR_SAMPLES.includes(value);
@@ -248,7 +337,7 @@ const TreeNode = ({ node, isRoot = false }) => {
 // 2.5. KOMPONEN MODAL KALKULASI LENGKAP
 // ==========================================
 
-export default function BOMEditor({ onBack, kursUsd, setKursUsd, kursEur, setKursEur }) {
+export default function BOMEditor({ onBack, kursUsd, setKursUsd, kursEur, setKursEur, fontCase, setFontCase }) {
   const [bomData, setBomData] = useState(manufactureGraph);
   const [viewMode, setViewMode] = useState('table'); 
   const [searchQuery, setSearchQuery] = useState('');
@@ -260,7 +349,12 @@ export default function BOMEditor({ onBack, kursUsd, setKursUsd, kursEur, setKur
   const [priceDisplay, setPriceDisplay] = useState('IDR');
   const [showHiddenContainers, setShowHiddenContainers] = useState(false);
 
-  const [editorTab, setEditorTab] = useState('struktur'); 
+  const [editorTab, setEditorTab] = useState('struktur');
+  const [materialHierarchyCols, setMaterialHierarchyCols] = useState({
+    modul: true,
+    submodul: true,
+    submodul2: true,
+  }); 
 
   // STATE BARU UNTUK CUSTOM ERP ENTRIES
   const [customErp, setCustomErp] = useState({
@@ -501,6 +595,7 @@ export default function BOMEditor({ onBack, kursUsd, setKursUsd, kursEur, setKur
       unit: 'EA',
       p: 0, l: 0, t: 0, vol: 0, biaya: 0, catatan: '', proses_count: 0, foto: '',
       vendor: '', sf: 0, wf: 0,
+      ...(tipe === 'PART' ? { materialType: '' } : {}),
       children: []
     };
 
@@ -651,6 +746,9 @@ export default function BOMEditor({ onBack, kursUsd, setKursUsd, kursEur, setKur
     return result;
   }, [flatNodes]);
 
+  const prosesLineItems = useMemo(() => flattenProsesLineItems(allProses), [allProses]);
+  const prosesLineTotals = useMemo(() => sumProsesLineItems(prosesLineItems), [prosesLineItems]);
+
   // SUMMARY REKAPITULASI PROSES (TABEL BARU)
   const prosesSummary = useMemo(() => {
     const summary = {};
@@ -732,6 +830,57 @@ export default function BOMEditor({ onBack, kursUsd, setKursUsd, kursEur, setKur
     return { material, process, production: material + process };
   }, [flatNodes]);
 
+  const materialTabTotals = useMemo(() => {
+    let material = 0;
+    let materialBase = 0;
+    let partCount = 0;
+    let totalQty = 0;
+    flatNodes.forEach((node) => {
+      const d = node.data;
+      if (d.tipe !== 'PART') return;
+      partCount++;
+      const sf = Number(d.sf) || 0;
+      const wf = Number(d.wf) || 0;
+      const base = (Number(d.biaya) || 0) * (Number(d.qty) || 1);
+      materialBase += base;
+      material += base * (1 + sf / 100 + wf / 100);
+      totalQty += Number(d.qty) || 0;
+    });
+    return { material, materialBase, partCount, totalQty };
+  }, [flatNodes]);
+
+  const prosesTabTotals = useMemo(
+    () => ({
+      ...prosesLineTotals,
+      lineCount: prosesLineItems.length,
+    }),
+    [prosesLineTotals, prosesLineItems.length],
+  );
+
+  const buildExportPayload = () =>
+    buildBomExportPayload({
+      productInfo,
+      productMeta,
+      dimensi,
+      bomData,
+      flatNodes,
+      cogsData,
+      cogsConfig,
+      kursUsd,
+      kursEur,
+      volBoxPacking,
+      volSFPacking,
+      summaryTotals,
+      materialTabTotals,
+      prosesTabTotals,
+      packingDimensions,
+      packingSpec,
+      containerCapacity,
+    });
+
+  const handleExportExcel = () => exportBomToExcel(buildExportPayload());
+  const handleExportPdf = () => exportBomToPdf(buildExportPayload());
+
   const fp = (value) => formatPrice(value, priceDisplay, kursUsd, kursEur);
 
   const inputClasses = "w-full bg-transparent hover:bg-slate-100 focus:bg-white border border-transparent hover:border-slate-200 focus:border-blue-400 focus:ring-1 focus:ring-blue-100 rounded px-2 py-1.5 outline-none transition-all [&::-webkit-inner-spin-button]:appearance-none";
@@ -745,7 +894,7 @@ export default function BOMEditor({ onBack, kursUsd, setKursUsd, kursEur, setKur
               <thead>
                 <tr>
                   <th colSpan={5} className="sticky left-0 z-20 bg-slate-50 border-b-[3px] border-b-slate-300 text-center py-3 px-2 text-[10px] text-slate-600 font-bold uppercase tracking-wider border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">KOMPONEN, IDENTITAS & AKSI</th>
-                  <th colSpan={2} className="border-b-[3px] border-b-slate-200 text-center py-3 px-2 text-[10px] text-slate-500 font-bold uppercase tracking-wider border-r border-slate-200 bg-slate-50/50">DETAIL LAINNYA</th>
+                  <th colSpan={3} className="border-b-[3px] border-b-slate-200 text-center py-3 px-2 text-[10px] text-slate-500 font-bold uppercase tracking-wider border-r border-slate-200 bg-slate-50/50">DETAIL LAINNYA</th>
                   <th colSpan={4} className="border-b-[3px] border-b-blue-500 text-center py-2 px-1 text-[10px] text-blue-700 font-bold uppercase tracking-wider border-r border-slate-200 bg-blue-50/30">SPESIFIKASI FISIK (DIMENSI & VOL)</th>
                   <th colSpan={3} className="border-b-[3px] border-b-amber-400 text-center py-2 px-1 text-[10px] text-amber-700 font-bold uppercase tracking-wider border-r border-slate-200 bg-amber-50/30">HARGA MATERIAL (SATUAN)</th>
                   <th colSpan={3} className="border-b-[3px] border-b-indigo-400 text-center py-2 px-1 text-[10px] text-indigo-700 font-bold uppercase tracking-wider border-r border-slate-200 bg-indigo-50/30">BIAYA PRODUKSI (TOTAL)</th>
@@ -760,6 +909,7 @@ export default function BOMEditor({ onBack, kursUsd, setKursUsd, kursEur, setKur
                   <th className="sticky left-[600px] z-20 bg-white py-3 px-4 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] border-r border-slate-200" style={{ minWidth: 250, width: 250 }}>NAMA MATERIAL</th>
                   
                   <th className="py-3 px-4 text-center w-20">GAMBAR</th>
+                  <th className="py-3 px-4 text-center min-w-[130px] text-emerald-700">TIPE MATERIAL</th>
                   <th className="py-3 px-4 border-r border-slate-200 text-center">QTY</th>
                   <th className="py-2 px-1.5 text-center w-[4.25rem]">Width (MM)</th>
                   <th className="py-2 px-1.5 text-center w-[4.25rem]">Depth (MM)</th>
@@ -875,6 +1025,16 @@ export default function BOMEditor({ onBack, kursUsd, setKursUsd, kursEur, setKur
                         </div>
                       </td>
                       <td className="py-2 px-2 border-r border-slate-100 text-center">
+                        {d.tipe === 'PART' ? (
+                          <MaterialTypeField
+                            value={d.materialType || ''}
+                            onChange={(val) => handleUpdateNode(node.id, 'materialType', val)}
+                          />
+                        ) : (
+                          <span className="text-slate-300 text-[10px]">—</span>
+                        )}
+                      </td>
+                      <td className="py-2 px-2 border-r border-slate-100 text-center">
                         <input type="number" value={d.qty} onChange={(e) => handleUpdateNode(node.id, 'qty', Number(e.target.value))} className={`${inputClasses} font-bold text-center w-16 text-slate-700`} />
                       </td>
                       <td className="py-2 px-1.5 text-center">
@@ -975,6 +1135,7 @@ export default function BOMEditor({ onBack, kursUsd, setKursUsd, kursEur, setKur
             {showProductPanel ? <PanelTopClose className="w-4 h-4" /> : <PanelTopOpen className="w-4 h-4" />}
             {showProductPanel ? 'Sembunyikan Produk' : 'Tampilkan Produk'}
           </button>
+          <FontCaseToggle value={fontCase} onChange={setFontCase} />
           <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200">
             {['IDR', 'USD', 'EUR'].map((mode) => (
               <button
@@ -996,6 +1157,7 @@ export default function BOMEditor({ onBack, kursUsd, setKursUsd, kursEur, setKur
             ))}
           </div>
           <CurrencyGroup kursUsd={kursUsd} setKursUsd={setKursUsd} kursEur={kursEur} setKursEur={setKursEur} className="mr-1" />
+          <ExportMenu onExportExcel={handleExportExcel} onExportPdf={handleExportPdf} />
           <button onClick={() => setShowKalkulasi(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-colors shadow-sm">
             <FileText className="w-4 h-4" /> View Kalkulasi Lengkap
           </button>
@@ -1590,42 +1752,87 @@ export default function BOMEditor({ onBack, kursUsd, setKursUsd, kursEur, setKur
           {/* TAB 3: KEBUTUHAN MATERIAL */}
           {editorTab === 'material' && (
             <div className="flex-1 overflow-y-auto p-6 md:p-8 bg-page flex flex-col gap-6 scrollbar-hide">
+              <MaterialTotalCards fp={fp} totals={materialTabTotals} />
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-                <div className="px-6 py-5 border-b border-slate-100 bg-white">
-                  <h2 className="text-lg font-black text-slate-800 flex items-center gap-2">
-                    <Grid className="w-5 h-5 text-amber-500" /> Kebutuhan Material (Daftar Part)
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-1 font-medium">Rekapitulasi otomatis dari seluruh komponen dalam struktur BOM yang diidentifikasi sebagai <strong>PART</strong>.</p>
+                <div className="px-6 py-5 border-b border-slate-100 bg-white flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-black text-slate-800 flex items-center gap-2">
+                      <Grid className="w-5 h-5 text-amber-500" /> Kebutuhan Material (Daftar Part)
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-1 font-medium">Rekapitulasi otomatis dari seluruh komponen dalam struktur BOM yang diidentifikasi sebagai <strong>PART</strong>.</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mr-1">Kolom hierarki:</span>
+                    {[
+                      { key: 'modul', label: 'Modul' },
+                      { key: 'submodul', label: 'Submodul' },
+                      { key: 'submodul2', label: 'Submodul 2' },
+                    ].map(({ key, label }) => {
+                      const visible = materialHierarchyCols[key];
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setMaterialHierarchyCols((prev) => ({ ...prev, [key]: !prev[key] }))}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-bold border transition-colors ${
+                            visible
+                              ? 'bg-slate-800 text-white border-slate-800'
+                              : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          {visible ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs whitespace-nowrap">
+                  <table className="w-full text-left text-xs whitespace-nowrap border-collapse">
                     <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-extrabold uppercase text-[10px] tracking-wider text-center">
                       <tr>
-                        <th rowSpan={2} className="px-4 py-4 border-r border-slate-100 w-12 border-b border-slate-200 align-middle">NO</th>
-                        <th rowSpan={2} className="px-4 py-4 border-r border-slate-100 w-16 border-b border-slate-200 align-middle">FOTO</th>
-                        <th rowSpan={2} className="px-4 py-4 border-r border-slate-100 text-left border-b border-slate-200 align-middle">KODE MATERIAL</th>
-                        <th rowSpan={2} className="px-4 py-4 border-r border-slate-100 text-left border-b border-slate-200 align-middle">NAMA MATERIAL</th>
-                        <th rowSpan={2} className="px-4 py-4 border-r border-slate-100 text-left border-b border-slate-200 align-middle">VENDOR</th>
-                        <th rowSpan={2} className="px-4 py-4 border-r border-slate-100 text-center border-b border-slate-200 text-amber-600 align-middle">SF (%)</th>
-                        <th rowSpan={2} className="px-4 py-4 border-r border-slate-100 text-center border-b border-slate-200 text-red-500 align-middle">WF (%)</th>
-                        <th rowSpan={2} className="px-4 py-4 border-r border-slate-100 text-center border-b border-slate-200 text-blue-600 align-middle">DIMENSI & VOLUME</th>
-                        <th rowSpan={2} className="px-4 py-4 border-r border-slate-100 text-amber-600 border-b border-slate-200 align-middle">QTY</th>
-                        <th rowSpan={2} className="px-4 py-4 border-r border-slate-100 text-amber-600 border-b border-slate-200 align-middle">UNIT</th>
-                        <th rowSpan={2} className="px-4 py-4 border-r border-slate-100 border-b border-slate-200 text-emerald-600 align-middle min-w-[140px]">
-                          HARGA BELI ({priceDisplay})
-                        </th>
-                        <th rowSpan={2} className="px-4 py-4 border-r border-slate-100 border-b border-slate-200 text-indigo-600 align-middle min-w-[140px]">
-                          HARGA PRODUKSI ({priceDisplay})
-                        </th>
-                        <th rowSpan={2} className="px-4 py-4 border-r border-slate-100 border-b border-slate-200 align-middle">STOCK GUDANG</th>
-                        <th rowSpan={2} className="px-4 py-4 border-r border-slate-100 border-b border-slate-200 align-middle">STATUS</th>
-                        <th rowSpan={2} className="px-4 py-4 w-16 border-b border-slate-200 align-middle">ACTION</th>
+                        <th rowSpan={2} className="px-4 py-3 border-r border-slate-100 w-12 border-b border-slate-200 align-middle">NO</th>
+                        <th rowSpan={2} className="px-4 py-3 border-r border-slate-100 w-16 border-b border-slate-200 align-middle">FOTO</th>
+                        {materialHierarchyCols.modul && (
+                          <th rowSpan={2} className="px-4 py-3 border-r border-slate-100 text-left border-b border-slate-200 align-middle min-w-[140px]">MODUL</th>
+                        )}
+                        {materialHierarchyCols.submodul && (
+                          <th rowSpan={2} className="px-4 py-3 border-r border-slate-100 text-left border-b border-slate-200 align-middle min-w-[140px]">SUBMODUL</th>
+                        )}
+                        {materialHierarchyCols.submodul2 && (
+                          <th rowSpan={2} className="px-4 py-3 border-r border-slate-100 text-left border-b border-slate-200 align-middle min-w-[120px]">SUBMODUL 2</th>
+                        )}
+                        <th rowSpan={2} className="px-4 py-3 border-r border-slate-100 text-left border-b border-slate-200 align-middle min-w-[120px] text-emerald-700">TIPE MATERIAL</th>
+                        <th rowSpan={2} className="px-4 py-3 border-r border-slate-100 text-left border-b border-slate-200 align-middle">KODE MATERIAL</th>
+                        <th rowSpan={2} className="px-4 py-3 border-r border-slate-100 text-left border-b border-slate-200 align-middle">NAMA MATERIAL</th>
+                        <th rowSpan={2} className="px-4 py-3 border-r border-slate-100 text-left border-b border-slate-200 align-middle">VENDOR</th>
+                        <th rowSpan={2} className="px-4 py-3 border-r border-slate-100 text-center border-b border-slate-200 text-amber-600 align-middle">SF (%)</th>
+                        <th rowSpan={2} className="px-4 py-3 border-r border-slate-100 text-center border-b border-slate-200 text-red-500 align-middle">WF (%)</th>
+                        <th rowSpan={2} className="px-4 py-3 border-r border-slate-100 text-center border-b border-slate-200 text-blue-600 align-middle">DIMENSI & VOLUME</th>
+                        <th rowSpan={2} className="px-4 py-3 border-r border-slate-100 text-amber-600 border-b border-slate-200 align-middle">QTY</th>
+                        <th rowSpan={2} className="px-4 py-3 border-r border-slate-100 text-amber-600 border-b border-slate-200 align-middle">UNIT</th>
+                        <th colSpan={3} className="px-2 py-2 border-r border-slate-200 border-b border-amber-200 text-amber-700 bg-amber-50/40">HARGA MATERIAL (SATUAN)</th>
+                        <th colSpan={3} className="px-2 py-2 border-r border-slate-200 border-b border-indigo-200 text-indigo-700 bg-indigo-50/40">BIAYA PRODUKSI (TOTAL)</th>
+                        <th rowSpan={2} className="px-4 py-3 border-r border-slate-100 border-b border-slate-200 align-middle">STOCK GUDANG</th>
+                        <th rowSpan={2} className="px-4 py-3 border-r border-slate-100 border-b border-slate-200 align-middle">STATUS</th>
+                        <th rowSpan={2} className="px-4 py-3 w-16 border-b border-slate-200 align-middle">ACTION</th>
+                      </tr>
+                      <tr className="border-b border-slate-200">
+                        <th className="py-2 px-1.5 text-right text-amber-700 w-[5.5rem]">MAT (IDR)</th>
+                        <th className="py-2 px-1.5 text-right text-amber-600 w-[4.5rem]">MAT (USD)</th>
+                        <th className="py-2 px-1.5 border-r border-slate-200 text-right text-amber-600 w-[4.5rem]">MAT (EUR)</th>
+                        <th className="py-2 px-1.5 text-right text-indigo-600 min-w-[6.5rem]">PROD (IDR)</th>
+                        <th className="py-2 px-1.5 text-right text-indigo-600 w-[4.5rem]">PROD (USD)</th>
+                        <th className="py-2 px-1.5 border-r border-slate-200 text-right text-indigo-600 w-[4.5rem]">PROD (EUR)</th>
                       </tr>
                     </thead>
                     <tbody className="font-medium text-slate-700 divide-y divide-slate-100">
                       {flatNodes.filter(n => n.data.tipe === 'PART').map((node, i) => {
                         const d = node.data;
+                        const hierarchy = getPartHierarchyLabels(bomData, node.id);
                         const hargaBeliIDR = d.biaya || 0;
+                        const usdMat = (hargaBeliIDR / kursUsd).toFixed(2);
+                        const eurMat = (hargaBeliIDR / kursEur).toFixed(2);
                         const sf = Number(d.sf) || 0;
                         const wf = Number(d.wf) || 0;
                         let totalProcess = 0;
@@ -1634,6 +1841,8 @@ export default function BOMEditor({ onBack, kursUsd, setKursUsd, kursEur, setKur
                         });
                         const hargaProduksiIDR =
                           hargaBeliIDR * (d.qty || 1) * (1 + sf / 100 + wf / 100) + totalProcess;
+                        const usdProd = (hargaProduksiIDR / kursUsd).toFixed(2);
+                        const eurProd = (hargaProduksiIDR / kursEur).toFixed(2);
 
                         return (
                           <tr key={node.id} className="hover:bg-slate-50 transition-colors">
@@ -1642,6 +1851,30 @@ export default function BOMEditor({ onBack, kursUsd, setKursUsd, kursEur, setKur
                                <div className="w-8 h-8 rounded border border-slate-200 overflow-hidden bg-slate-50 flex items-center justify-center mx-auto">
                                  {d.foto ? <img src={d.foto} alt="pic" className="w-full h-full object-cover" /> : <ImageIcon className="w-4 h-4 text-slate-300" />}
                                </div>
+                            </td>
+                            {materialHierarchyCols.modul && (
+                              <td className="px-4 py-3 border-r border-slate-100 text-left">
+                                <div className="font-bold text-slate-700 text-[11px] max-w-[160px] truncate" title={hierarchy.modul?.nama}>{hierarchy.modul?.nama || '—'}</div>
+                                {hierarchy.modul?.kode && <div className="text-[9px] font-mono text-slate-400 truncate">{hierarchy.modul.kode}</div>}
+                              </td>
+                            )}
+                            {materialHierarchyCols.submodul && (
+                              <td className="px-4 py-3 border-r border-slate-100 text-left">
+                                <div className="font-bold text-slate-700 text-[11px] max-w-[160px] truncate" title={hierarchy.submodul?.nama}>{hierarchy.submodul?.nama || '—'}</div>
+                                {hierarchy.submodul?.kode && <div className="text-[9px] font-mono text-slate-400 truncate">{hierarchy.submodul.kode}</div>}
+                              </td>
+                            )}
+                            {materialHierarchyCols.submodul2 && (
+                              <td className="px-4 py-3 border-r border-slate-100 text-left">
+                                <div className="font-bold text-slate-700 text-[11px] max-w-[140px] truncate" title={hierarchy.submodul2?.nama}>{hierarchy.submodul2?.nama || '—'}</div>
+                                {hierarchy.submodul2?.kode && <div className="text-[9px] font-mono text-slate-400 truncate">{hierarchy.submodul2.kode}</div>}
+                              </td>
+                            )}
+                            <td className="px-4 py-3 border-r border-slate-100">
+                              <MaterialTypeField
+                                value={d.materialType || ''}
+                                onChange={(val) => handleUpdateNode(node.id, 'materialType', val)}
+                              />
                             </td>
                             <td className="px-4 py-3 border-r border-slate-100 font-mono text-slate-500">{d.kode}</td>
                             <td className="px-4 py-3 border-r border-slate-100 font-black text-slate-700">{d.nama}</td>
@@ -1674,12 +1907,14 @@ export default function BOMEditor({ onBack, kursUsd, setKursUsd, kursEur, setKur
                             <td className="px-4 py-3 border-r border-slate-100 text-center font-black text-amber-600 bg-amber-50/20">{d.qty}</td>
                             <td className="px-4 py-3 border-r border-slate-100 text-center font-bold text-slate-600 uppercase text-[10px]">{d.unit || 'EA'}</td>
                             
-                            <td className={`px-4 py-3 border-r border-slate-100 text-right font-bold ${priceDisplay === 'IDR' ? 'text-emerald-700' : priceDisplay === 'USD' ? 'text-amber-600' : 'text-brand-600'}`}>
-                              {fp(hargaBeliIDR)}
+                            <td className="py-2 px-1.5 border-r border-slate-100 text-right bg-amber-50/15 font-bold text-slate-700 tabular-nums">
+                              Rp {formatIDR(hargaBeliIDR)}
                             </td>
-                            <td className={`px-4 py-3 border-r border-slate-100 text-right font-black bg-indigo-50/10 ${priceDisplay === 'IDR' ? 'text-indigo-700' : priceDisplay === 'USD' ? 'text-amber-600' : 'text-brand-600'}`}>
-                              {fp(hargaProduksiIDR)}
-                            </td>
+                            <td className="py-2 px-1.5 text-right text-amber-700/90 bg-amber-50/15 tabular-nums text-[11px] font-semibold">{usdMat}</td>
+                            <td className="py-2 px-1.5 border-r border-slate-100 text-right text-amber-700/90 bg-amber-50/15 tabular-nums text-[11px] font-semibold">{eurMat}</td>
+                            <td className="py-2 px-1.5 text-right font-black text-indigo-700 bg-indigo-50/10 tabular-nums text-[11px]">Rp {formatIDR(hargaProduksiIDR)}</td>
+                            <td className="py-2 px-1.5 text-right font-bold text-indigo-600 bg-indigo-50/10 tabular-nums text-[11px]">{usdProd}</td>
+                            <td className="py-2 px-1.5 border-r border-slate-100 text-right font-bold text-indigo-600 bg-indigo-50/10 tabular-nums text-[11px]">{eurProd}</td>
 
                             <td className="px-4 py-3 border-r border-slate-100 text-center">
                               <input type="text" defaultValue="0" className="w-12 text-center border border-slate-200 rounded px-1 py-1 outline-none focus:border-blue-400 font-bold text-slate-600" />
@@ -1707,17 +1942,14 @@ export default function BOMEditor({ onBack, kursUsd, setKursUsd, kursEur, setKur
           {/* TAB 4: KEBUTUHAN PROSES */}
           {editorTab === 'proses' && (
             <div className="flex-1 overflow-y-auto p-6 md:p-8 bg-page flex flex-col gap-6 scrollbar-hide">
-              
-              {/* 1. Tabel Rekapitulasi Manufaktur */}
+              <ProsesTotalCards fp={fp} totals={prosesTabTotals} />
+
+              {/* Tabel Rekapitulasi Manufaktur */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-                <div className="px-6 py-4 border-b border-slate-100 bg-white flex justify-between items-center">
+                <div className="px-6 py-4 border-b border-slate-100 bg-white">
                   <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
                     <PieChart className="w-4 h-4 text-indigo-500" /> Tabel Rekapitulasi Manufaktur
                   </h3>
-                  <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-100 px-3 py-1.5 rounded-lg shadow-sm">
-                     <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">Grand Total Operasional:</span>
-                     <span className="text-sm font-black text-indigo-700">Rp {formatIDR(prosesSummary.grandTotal)}</span>
-                  </div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs whitespace-nowrap">
@@ -1766,66 +1998,94 @@ export default function BOMEditor({ onBack, kursUsd, setKursUsd, kursEur, setKur
                 </div>
               </div>
 
-              {/* Work Center & Man Power — sejajar, ringkas tanpa scroll dalam panel */}
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col">
-                  <div className="px-4 py-3 border-b border-slate-100 bg-blue-50/40">
-                    <h3 className="text-xs font-black text-slate-800 flex items-center gap-2">
-                      <Server className="w-4 h-4 text-blue-500" /> Detail Work Center (Mesin)
-                    </h3>
-                  </div>
-                  <div className="p-3">
-                    {allProses.length === 0 ? (
-                      <p className="text-xs text-slate-400 italic text-center py-6">Tidak ada data operasi.</p>
-                    ) : (
-                      <div className="grid grid-cols-1 gap-2">
-                        {allProses.map((p, i) => {
-                          const { waktu, mesin: biayaMesin } = calcProsesCosts(p);
-                          return (
-                            <div key={`wc-${i}`} className="grid grid-cols-[24px_1fr_auto_auto] gap-2 items-center bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 text-[10px]">
-                              <span className="font-black text-slate-400">{i + 1}</span>
-                              <div className="min-w-0">
-                                <div className="font-bold text-slate-800 truncate">{p.nama}</div>
-                                <div className="text-[9px] text-slate-500 truncate">{p.nodeNama} · {p.mfgProcess || '-'}</div>
-                              </div>
-                              <span className="font-black text-blue-600 whitespace-nowrap">{waktu} mnt</span>
-                              <span className="font-black text-indigo-700 whitespace-nowrap">{fp(biayaMesin)}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
+              {/* 2. Tabel Detail Kebutuhan Proses (WC & Man Power) */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                <div className="px-6 py-4 border-b border-slate-100 bg-white">
+                  <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
+                    <Wrench className="w-4 h-4 text-indigo-500" /> Detail Kebutuhan Proses
+                  </h3>
                 </div>
-
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col">
-                  <div className="px-4 py-3 border-b border-slate-100 bg-emerald-50/40">
-                    <h3 className="text-xs font-black text-slate-800 flex items-center gap-2">
-                      <Users className="w-4 h-4 text-emerald-500" /> Detail Man Power (Pekerja)
-                    </h3>
-                  </div>
-                  <div className="p-3">
-                    {allProses.length === 0 ? (
-                      <p className="text-xs text-slate-400 italic text-center py-6">Tidak ada data operasi.</p>
-                    ) : (
-                      <div className="grid grid-cols-1 gap-2">
-                        {allProses.map((p, i) => {
-                          const { waktu, person, pekerja: biayaPekerja } = calcProsesCosts(p);
-                          return (
-                            <div key={`mp-${i}`} className="grid grid-cols-[24px_1fr_auto_auto] gap-2 items-center bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 text-[10px]">
-                              <span className="font-black text-slate-400">{i + 1}</span>
-                              <div className="min-w-0">
-                                <div className="font-bold text-slate-800 truncate">{p.nama}</div>
-                                <div className="text-[9px] text-slate-500 truncate">{p.nodeNama} · {person} org</div>
-                              </div>
-                              <span className="font-black text-blue-600 whitespace-nowrap">{waktu} mnt</span>
-                              <span className="font-black text-emerald-700 whitespace-nowrap">{fp(biayaPekerja)}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs whitespace-nowrap border-collapse">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-extrabold uppercase text-[9px] tracking-wider text-center">
+                      <tr>
+                        <th className="px-3 py-3 border-r border-slate-100 w-10">NO</th>
+                        <th className="px-3 py-3 border-r border-slate-100 text-left min-w-[120px]">KODE PART</th>
+                        <th className="px-3 py-3 border-r border-slate-100 text-left min-w-[140px]">NAMA PART</th>
+                        <th className="px-3 py-3 border-r border-slate-100 text-left min-w-[120px]">OPERASI</th>
+                        <th className="px-3 py-3 border-r border-slate-100 w-24">TIPE</th>
+                        <th className="px-3 py-3 border-r border-slate-100 text-left min-w-[100px]">TAHAP</th>
+                        <th className="px-3 py-3 border-r border-slate-100 text-left min-w-[140px]">WC / LANGKAH</th>
+                        <th className="px-3 py-3 border-r border-slate-100 text-blue-600 w-16">DURASI</th>
+                        <th className="px-3 py-3 border-r border-slate-100 text-amber-600 w-14">ORG</th>
+                        <th className="px-3 py-3 border-r border-slate-100 w-20">ORG·MNT</th>
+                        <th className="px-3 py-3 border-r border-slate-100 text-right min-w-[100px]">BIAYA WC</th>
+                        <th className="px-3 py-3 border-r border-slate-100 text-right min-w-[100px]">BIAYA TK</th>
+                        <th className="px-3 py-3 border-r border-slate-100 text-right text-indigo-600 min-w-[100px]">SUBTOTAL</th>
+                        <th className="px-3 py-3 text-left min-w-[140px]">DETAIL</th>
+                      </tr>
+                    </thead>
+                    <tbody className="font-medium text-slate-700 divide-y divide-slate-100">
+                      {prosesLineItems.length === 0 ? (
+                        <tr>
+                          <td colSpan={14} className="px-6 py-10 text-center text-slate-400 text-xs italic">
+                            Belum ada operasi manufaktur — tambahkan proses pada part di tab Struktur atau buka Routing.
+                          </td>
+                        </tr>
+                      ) : prosesLineItems.map((ln, i) => (
+                        <tr key={ln.key} className="hover:bg-slate-50 transition-colors align-top">
+                          <td className="px-3 py-2.5 text-center border-r border-slate-100 text-slate-400 font-bold">{i + 1}</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 font-mono text-[10px] text-slate-500">{ln.nodeKode || '—'}</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 font-bold text-slate-800 text-[11px]">{ln.nodeNama || '—'}</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 font-bold text-slate-700">{ln.opNama || '—'}</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 text-center">
+                            <span className={`inline-block text-[8px] font-black uppercase px-1.5 py-0.5 rounded border ${
+                              ln.inputMode === 'routing'
+                                ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                : 'bg-blue-50 text-blue-700 border-blue-200'
+                            }`}>
+                              {ln.inputMode === 'routing' ? 'Routing' : 'Work Center'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 text-[10px] text-slate-500">{ln.mfgProcess || '—'}</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100">
+                            {ln.stepUrutan != null ? (
+                              <span className="font-bold text-indigo-700 text-[10px]">#{ln.stepUrutan} {ln.wcNama}</span>
+                            ) : (
+                              <span className="font-bold text-blue-700 text-[10px]">{ln.wcNama}</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 text-center font-black text-blue-600">{ln.waktu} mnt</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 text-center font-black text-amber-700">{ln.person}</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 text-center text-[10px] text-slate-500">{ln.waktu * ln.person}</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 text-right font-bold text-slate-700 tabular-nums">Rp {formatIDR(ln.biayaMesin)}</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 text-right font-bold text-emerald-700 tabular-nums">Rp {formatIDR(ln.biayaPekerja)}</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 text-right font-black text-indigo-700 bg-indigo-50/10 tabular-nums">Rp {formatIDR(ln.biayaTotal)}</td>
+                          <td className="px-3 py-2.5 text-left align-top">
+                            {ln.inputMode === 'routing' && ln.stepUrutan === 1 ? (
+                              <OperasiDetailCell operasi={ln.parentOp} operasiIndex={ln.opIndex} />
+                            ) : (
+                              <span className="text-[10px] text-slate-500">{ln.note || '—'}</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    {prosesLineItems.length > 0 && (
+                      <tfoot className="bg-slate-50 border-t-2 border-slate-200 text-[10px] font-black">
+                        <tr>
+                          <td colSpan={7} className="px-3 py-3 text-right uppercase tracking-widest text-slate-500">Total ({prosesLineItems.length} baris):</td>
+                          <td className="px-3 py-3 text-center text-blue-600">{prosesLineTotals.waktu} mnt</td>
+                          <td className="px-3 py-3 text-center text-amber-700">—</td>
+                          <td className="px-3 py-3 text-center text-slate-600">{prosesLineTotals.personMinutes}</td>
+                          <td className="px-3 py-3 text-right text-slate-800 tabular-nums">Rp {formatIDR(prosesLineTotals.mesin)}</td>
+                          <td className="px-3 py-3 text-right text-emerald-700 tabular-nums">Rp {formatIDR(prosesLineTotals.pekerja)}</td>
+                          <td className="px-3 py-3 text-right text-indigo-700 tabular-nums">Rp {formatIDR(prosesLineTotals.total)}</td>
+                          <td />
+                        </tr>
+                      </tfoot>
                     )}
-                  </div>
+                  </table>
                 </div>
               </div>
 
@@ -1841,19 +2101,8 @@ export default function BOMEditor({ onBack, kursUsd, setKursUsd, kursEur, setKur
                 </h2>
                 <p className="text-xs text-slate-500 mt-1 font-medium">Rangkuman lengkap struktur hierarki, spesifikasi dimensi, harga material, faktor penyesuaian (SF & WF), dan rincian biaya operasi manufaktur per komponen.</p>
               </div>
-              <div className="px-8 py-4 bg-white border-b border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-4 shrink-0">
-                <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-4">
-                  <span className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest">Total Material</span>
-                  <p className="text-lg font-black text-emerald-800 mt-1">{fp(summaryTotals.material)}</p>
-                </div>
-                <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
-                  <span className="text-[9px] font-bold text-indigo-600 uppercase tracking-widest">Total Proses</span>
-                  <p className="text-lg font-black text-indigo-800 mt-1">{fp(summaryTotals.process)}</p>
-                </div>
-                <div className="rounded-xl border border-brand-200 bg-brand-50/50 p-4">
-                  <span className="text-[9px] font-bold text-brand-600 uppercase tracking-widest">Total Biaya Produksi</span>
-                  <p className="text-xl font-black text-brand-800 mt-1">{fp(summaryTotals.production)}</p>
-                </div>
+              <div className="px-8 py-4 bg-white border-b border-slate-200 shrink-0">
+                <SummaryTotalCards fp={fp} totals={summaryTotals} />
               </div>
               <div className="overflow-x-auto">
                  <table className="w-full text-left text-xs whitespace-nowrap border-collapse">

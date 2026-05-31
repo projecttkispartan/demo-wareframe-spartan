@@ -61,7 +61,8 @@ export const manufactureGraph = {
           t: 42,
           vol: 0.0009,
           biaya: 65000,
-          catatan: 'Material: KAYU MIN',
+          materialType: 'kayu',
+          catatan: 'Grade A',
           proses_count: 2,
           foto: 'https://images.unsplash.com/photo-1611078813350-0a149c40fd3b?w=150&h=150&fit=crop&q=80',
           proses: [
@@ -106,7 +107,8 @@ export const manufactureGraph = {
           t: 3,
           vol: 0.0015,
           biaya: 95000,
-          catatan: 'Material: PLYWOOD',
+          materialType: 'plywood',
+          catatan: '',
           proses_count: 1,
           foto: 'https://images.unsplash.com/photo-1563283995-1f9f2bce4302?w=150&h=150&fit=crop&q=80',
           proses: [
@@ -179,7 +181,8 @@ export const manufactureGraph = {
               t: 25,
               vol: 0.0006,
               biaya: 35000,
-              catatan: 'Material: KAYU MIN',
+              materialType: 'kayu',
+              catatan: '',
               proses_count: 1,
               foto: 'https://images.unsplash.com/photo-1533090481720-856c6e3c1fdc?w=150&h=150&fit=crop&q=80',
               proses: [
@@ -211,7 +214,8 @@ export const manufactureGraph = {
               t: 25,
               vol: 0.0005,
               biaya: 32000,
-              catatan: 'Material: KAYU MIN',
+              materialType: 'kayu',
+              catatan: '',
               proses_count: 1,
               foto: 'https://images.unsplash.com/photo-1611078813350-0a149c40fd3b?w=150&h=150&fit=crop&q=80',
               proses: [
@@ -245,7 +249,8 @@ export const manufactureGraph = {
           t: 30,
           vol: 0.0004,
           biaya: 28000,
-          catatan: 'Material: KAYU MIN',
+          materialType: 'kayu',
+          catatan: '',
           proses_count: 1,
           foto: '',
           proses: [
@@ -277,7 +282,8 @@ export const manufactureGraph = {
           t: 30,
           vol: 0.0015,
           biaya: 45000,
-          catatan: 'Material: KAYU MIN',
+          materialType: 'kayu',
+          catatan: '',
           proses_count: 1,
           foto: '',
           proses: [

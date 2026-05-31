@@ -1,17 +1,19 @@
 import { Search, Plus, Network, Package, Image as ImageIcon, SquarePen, Trash2 } from 'lucide-react';
 import AppHeader from '../components/ui/AppHeader';
 import { CurrencyGroup } from '../components/ui/CurrencyInput';
+import FontCaseToggle from '../components/ui/FontCaseToggle';
 import KpiCard from '../components/ui/KpiCard';
 import { mockProjects } from '../data/mockData';
 import { formatIDR } from '../utils/formatters';
 
-export default function Dashboard({ onNewProject, kursUsd, setKursUsd, kursEur, setKursEur }) {
+export default function Dashboard({ onNewProject, kursUsd, setKursUsd, kursEur, setKursEur, fontCase, setFontCase }) {
   const totalBom = mockProjects.reduce((sum, p) => sum + p.jumlahBom, 0);
   const totalProduk = mockProjects.reduce((sum, p) => sum + p.jumlahProduk, 0);
 
   return (
     <div className="flex flex-1 flex-col min-h-0 min-w-0">
       <AppHeader>
+        <FontCaseToggle value={fontCase} onChange={setFontCase} />
         <CurrencyGroup kursUsd={kursUsd} setKursUsd={setKursUsd} kursEur={kursEur} setKursEur={setKursEur} />
         <div className="relative ml-2">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />

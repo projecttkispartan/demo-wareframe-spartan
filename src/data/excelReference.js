@@ -51,3 +51,14 @@ export const SUMMARY_COST_CATEGORIES = [
 ];
 
 export const EXCEL_FACTORY_OH_PCT = 5;
+
+/** Kategori tipe material untuk part — baris 15–20 SUMMARY COST Excel */
+export const MATERIAL_TYPE_OPTIONS = SUMMARY_COST_CATEGORIES.filter(
+  (c) => !c.isSubtotal && ['kayu', 'plywood', 'veneer', 'komponen', 'steel', 'hardware'].includes(c.key),
+);
+
+export function getMaterialTypeLabel(key) {
+  if (!key) return '—';
+  const found = MATERIAL_TYPE_OPTIONS.find((c) => c.key === key);
+  return found?.label || key;
+}

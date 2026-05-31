@@ -14,7 +14,9 @@ import {
 import { flattenTree } from '../../utils/treeHelpers';
 import { formatIDR } from '../../utils/formatters';
 import { EXCEL_FACTORY_OH_PCT } from '../../data/excelReference';
-import { rollupTreeCosts, computePartsTotals } from '../../utils/bomCostRollup';
+import { rollupTreeCosts, computePartsTotals, expandProsesList } from '../../utils/bomCostRollup';
+import { flattenProsesLineItems, sumProsesLineItems } from '../../utils/prosesLineItems';
+import OperasiDetailCell from '../ui/OperasiDetailCell';
 
 const fmt = (val) => (val === 0 ? '—' : formatIDR(val));
 
@@ -73,6 +75,18 @@ export default function KalkulasiModal({
     }),
     [flatNodes]
   );
+
+  const prosesLineItems = useMemo(() => {
+    const entries = [];
+    flatNodes.forEach((node) => {
+      expandProsesList(node.data).forEach((p) => {
+        entries.push({ ...p, nodeId: node.id, nodeNama: node.data.nama, nodeKode: node.data.kode });
+      });
+    });
+    return flattenProsesLineItems(entries);
+  }, [flatNodes]);
+
+  const prosesLineTotals = useMemo(() => sumProsesLineItems(prosesLineItems), [prosesLineItems]);
 
   const packingJalur = cogsConfig?.packingJalur || 'BOX';
   const packingCost = cogsData?.packingCost ?? 0;
@@ -276,24 +290,103 @@ export default function KalkulasiModal({
               <div className="panel-card">
                 <div className="panel-card-head">
                   <h3 className="flex items-center gap-2">
-                    <Wrench className="w-4 h-4 text-indigo-500" /> Ringkasan Biaya Proses (informasi)
+                    <Wrench className="w-4 h-4 text-indigo-500" /> Detail Kebutuhan Proses
                   </h3>
+                  <p className="text-[10px] text-slate-500 font-medium mt-1 normal-case tracking-normal">
+                    Satu tabel — work center tunggal atau langkah routing, biaya mesin & pekerja
+                  </p>
                 </div>
-                <div className="p-4 grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
-                  <div className="rounded-lg border border-indigo-100 bg-indigo-50/50 p-3">
-                    <span className="text-[10px] font-bold text-indigo-500 uppercase">Total waktu operasi</span>
-                    <p className="text-lg font-black text-indigo-800 mt-1">{partTotals?.waktu ?? 0} menit</p>
-                  </div>
-                  <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-3">
-                    <span className="text-[10px] font-bold text-blue-500 uppercase">Biaya mesin (WC)</span>
-                    <p className="text-lg font-black text-blue-800 mt-1">Rp {fmt(partTotals?.mesin)}</p>
-                    <p className="text-[10px] text-slate-500 mt-1">Waktu × rate mesin per routing/WC</p>
-                  </div>
-                  <div className="rounded-lg border border-emerald-100 bg-emerald-50/50 p-3">
-                    <span className="text-[10px] font-bold text-emerald-500 uppercase">Biaya pekerja</span>
-                    <p className="text-lg font-black text-emerald-800 mt-1">Rp {fmt(partTotals?.pekerja)}</p>
-                    <p className="text-[10px] text-slate-500 mt-1">Waktu × jumlah org × rate TK</p>
-                  </div>
+                <div className="data-table-wrap rounded-none border-0 border-t border-slate-100 shadow-none max-h-[min(50vh,480px)] overflow-auto scroll-thin">
+                  <table className="table-compact min-w-[960px]">
+                    <thead>
+                      <tr>
+                        <th className="text-center w-10">No</th>
+                        <th className="text-left min-w-[120px]">Part / Komponen</th>
+                        <th className="text-left">Operasi</th>
+                        <th className="text-center w-20">Tipe</th>
+                        <th className="text-left min-w-[120px]">WC / Langkah</th>
+                        <th className="text-center">Durasi</th>
+                        <th className="text-center">Pekerja</th>
+                        <th className="text-right">Biaya WC</th>
+                        <th className="text-right">Biaya TK</th>
+                        <th className="text-right">Subtotal</th>
+                        <th className="text-left min-w-[88px]">Detail</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {prosesLineItems.length === 0 ? (
+                        <tr>
+                          <td colSpan={11} className="text-center text-slate-400 italic py-8 text-xs">
+                            Belum ada operasi manufaktur terdaftar pada part BOM.
+                          </td>
+                        </tr>
+                      ) : (
+                        prosesLineItems.map((ln, i) => (
+                          <tr key={ln.key} className="hover:bg-indigo-50/20">
+                            <td className="text-center text-slate-400 font-semibold tabular-nums">{i + 1}</td>
+                            <td>
+                              <div className="font-bold text-slate-800 text-[11px] truncate max-w-[140px]" title={ln.nodeNama}>
+                                {ln.nodeNama}
+                              </div>
+                              <div className="font-mono text-[10px] text-slate-500">{ln.nodeKode}</div>
+                            </td>
+                            <td className="font-bold text-slate-800 text-[11px]">{ln.opNama}</td>
+                            <td className="text-center">
+                              <span
+                                className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
+                                  ln.inputMode === 'routing'
+                                    ? 'bg-indigo-100 text-indigo-700'
+                                    : 'bg-blue-100 text-blue-700'
+                                }`}
+                              >
+                                {ln.inputMode === 'routing' ? 'Routing' : 'WC'}
+                              </span>
+                            </td>
+                            <td className="text-[11px] text-slate-700">
+                              {ln.inputMode === 'routing' && ln.stepUrutan != null ? (
+                                <span>
+                                  <span className="font-bold text-indigo-600">#{ln.stepUrutan}</span> {ln.wcNama}
+                                </span>
+                              ) : (
+                                ln.wcNama
+                              )}
+                            </td>
+                            <td className="text-center font-bold text-blue-600 tabular-nums">{ln.waktu} mnt</td>
+                            <td className="text-center font-bold text-amber-600 tabular-nums">{ln.person} org</td>
+                            <td className="text-right tabular-nums text-indigo-700">Rp {fmt(ln.biayaMesin)}</td>
+                            <td className="text-right tabular-nums text-emerald-700">Rp {fmt(ln.biayaPekerja)}</td>
+                            <td className="text-right font-black tabular-nums text-indigo-800">Rp {fmt(ln.biayaTotal)}</td>
+                            <td className="align-top">
+                              {ln.inputMode === 'routing' && ln.stepUrutan === 1 ? (
+                                <OperasiDetailCell operasi={ln.parentOp} operasiIndex={ln.opIndex} />
+                              ) : ln.note?.trim() ? (
+                                <span className="text-[10px] text-slate-500 line-clamp-2" title={ln.note}>{ln.note}</span>
+                              ) : (
+                                <span className="text-slate-300">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                    {prosesLineItems.length > 0 && (
+                      <tfoot>
+                        <tr className="bg-indigo-50 font-bold">
+                          <td colSpan={5} className="text-right uppercase text-[10px] text-slate-600">
+                            Total kebutuhan proses:
+                          </td>
+                          <td className="text-center text-blue-700 tabular-nums">{prosesLineTotals.waktu} mnt</td>
+                          <td className="text-center text-amber-700 tabular-nums text-[10px]">
+                            {prosesLineTotals.personMinutes} org·mnt
+                          </td>
+                          <td className="text-right text-indigo-700 tabular-nums">Rp {fmt(prosesLineTotals.mesin)}</td>
+                          <td className="text-right text-emerald-700 tabular-nums">Rp {fmt(prosesLineTotals.pekerja)}</td>
+                          <td className="text-right font-black text-indigo-900 tabular-nums">Rp {fmt(prosesLineTotals.total)}</td>
+                          <td />
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
                 </div>
               </div>
 

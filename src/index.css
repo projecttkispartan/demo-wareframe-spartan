@@ -7,6 +7,15 @@
     height: 100%;
   }
 
+  /* Toggle huruf global — diterapkan via class di <html> */
+  html.font-case-normal :where(:not(input):not(textarea):not(select):not(option)) {
+    text-transform: none !important;
+  }
+
+  html.font-case-uppercase :where(:not(input):not(textarea):not(select):not(option)) {
+    text-transform: uppercase !important;
+  }
+
   body {
     @apply m-0 p-0 antialiased text-slate-800 overflow-hidden bg-page;
     height: 100%;
